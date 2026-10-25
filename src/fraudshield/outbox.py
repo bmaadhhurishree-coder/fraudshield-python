@@ -1,8 +1,4 @@
-"""At-least-once Kafka delivery of durable transaction events.
-
-A crash after Kafka acknowledgement but before database commit can resend an event.
-Consumers MUST deduplicate using event_id; this is not exactly-once delivery.
-"""
+"""At-least-once publication of transaction outbox records to Kafka."""
 import json
 import logging
 import os
@@ -11,48 +7,50 @@ import time
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .db import Base, OutboxEvent, make_engine, now_utc
+from .db import Base, OutboxEvent, OutboxReceipt, make_engine, now_utc
 
 log = logging.getLogger(__name__)
 TOPIC = "fraudshield.transactions.v1"
 
 
 def publish_batch(session: Session, producer, *, batch_size: int = 100) -> int:
-    """Publish a small batch, recording success only after broker acknowledgement.
+    """Send pending events and record delivery receipts after Kafka acknowledgements.
 
-    Single publisher expected for MVP; parallel deployment requires DB claiming
-    (e.g. SELECT ... FOR UPDATE SKIP LOCKED) and a lease/ownership strategy.
+    Deploy one publisher process until DB row claims/leases are implemented.
+    A crash before recording the receipt can cause duplicate delivery.
     """
     pending = session.scalars(
         select(OutboxEvent)
-        .where(OutboxEvent.published_at.is_(None))
+        .outerjoin(OutboxReceipt, OutboxReceipt.event_id == OutboxEvent.event_id)
+        .where(OutboxReceipt.event_id.is_(None))
         .order_by(OutboxEvent.created_at, OutboxEvent.event_id)
         .limit(batch_size)
     ).all()
     delivered = 0
     for event in pending:
-        envelope = {
-            "event_id": event.event_id,
-            "event_type": event.event_type,
-            "occurred_at": event.created_at.isoformat(),
-            "payload": json.loads(event.payload_json),
-        }
+        envelope = {"event_id": event.event_id, "event_type": event.event_type,
+                    "occurred_at": event.created_at.isoformat(),
+                    "payload": json.loads(event.payload_json)}
+        result = {"acknowledged": False, "error": None}
+
+        def on_delivery(error, _message):
+            result["error"] = error
+            result["acknowledged"] = error is None
+
         try:
-            producer.produce(
-                TOPIC,
-                key=event.transaction_id.encode(),
-                value=json.dumps(envelope, sort_keys=True).encode(),
-            )
-            producer.flush(timeout=10)
-            # flush() returns the number of outstanding messages; delivery callbacks
-            # surface broker errors. A callback is required to confirm delivery.
+            producer.produce(TOPIC, key=event.transaction_id.encode(),
+                             value=json.dumps(envelope, sort_keys=True).encode(),
+                             on_delivery=on_delivery)
+            outstanding = producer.flush(timeout=10)
+            if outstanding or not result["acknowledged"] or result["error"]:
+                raise RuntimeError(f"Kafka delivery not confirmed: {result['error']}")
+            session.add(OutboxReceipt(event_id=event.event_id, published_at=now_utc()))
+            session.commit()
+            delivered += 1
         except Exception:
-            log.exception("Kafka publish failed for event %s", event.event_id)
             session.rollback()
+            log.exception("Kafka delivery failed for %s", event.event_id)
             break
-        event.published_at = now_utc()
-        session.commit()
-        delivered += 1
     return delivered
 
 
