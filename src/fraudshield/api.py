@@ -73,8 +73,12 @@ def create_app(database_url: str | None = None) -> FastAPI:
             session.add(OutboxEvent(
                 event_id=str(uuid4()), transaction_id=key,
                 event_type="transaction.scored.v1",
-                payload_json=json.dumps({"transaction_id": key, "score": result.score,
-                                         "decision": result.decision.value, "reasons": result.reasons}),
+                payload_json=json.dumps({
+                    "transaction_id": key,
+                    "score": result.score,
+                    "decision": result.decision.value,
+                    "reasons": result.reasons,
+                }),
                 created_at=timestamp,
             ))
             try:
@@ -84,7 +88,9 @@ def create_app(database_url: str | None = None) -> FastAPI:
                 existing = session.get(TransactionRow, key)
                 if existing and existing.payload_hash == fingerprint:
                     return to_response(existing)
-                raise HTTPException(409, "transaction_id already used with different payload") from None
+                raise HTTPException(
+                    409, "transaction_id already used with different payload"
+                ) from None
             session.refresh(row)
             return to_response(row)
 
