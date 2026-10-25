@@ -1,0 +1,11 @@
+{
+  "transaction_id": "bb756c11-823d-424a-9448-aeb10842a9e3",
+  "account_id": "customer-123",
+  "amount": "4800.00",
+  "currency": "USD",
+  "country": "GB",
+  "home_country": "US",
+  "device_id": "unrecognized-phone",
+  "known_device": false,
+  "transactions_last_hour": 12
+}
