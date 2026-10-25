@@ -30,8 +30,8 @@ async def handle_event(client: Client, event: dict) -> None:
             task_queue=TASK_QUEUE,
         )
     except Exception as exc:
-        from temporalio.service import RPCError
         from temporalio.client import WorkflowAlreadyStartedError
+        from temporalio.service import RPCError
 
         if isinstance(exc, WorkflowAlreadyStartedError):
             log.info("Investigation already exists for %s", transaction_id)
