@@ -39,6 +39,13 @@ class OutboxEvent(Base):
     transaction: Mapped[TransactionRow] = relationship(back_populates="events")
 
 
+class OutboxReceipt(Base):
+    __tablename__ = "outbox_receipts"
+
+    event_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    published_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 def make_engine(database_url: str | None = None):
     url = database_url or os.getenv("DATABASE_URL", "sqlite:///./fraudshield.db")
     connect_args = {"check_same_thread": False} if url.startswith("sqlite") else {}
