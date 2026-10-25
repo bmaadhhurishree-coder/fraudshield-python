@@ -13,6 +13,15 @@ log = logging.getLogger(__name__)
 TOPIC = "fraudshield.transactions.v1"
 
 
+def make_delivery_callback(result: dict):
+    """Bind an acknowledgement result to exactly one Kafka delivery callback."""
+    def on_delivery(error, _message):
+        result["error"] = error
+        result["acknowledged"] = error is None
+
+    return on_delivery
+
+
 def publish_batch(session: Session, producer, *, batch_size: int = 100) -> int:
     """Send pending events and record delivery receipts after Kafka acknowledgements.
 
@@ -33,14 +42,10 @@ def publish_batch(session: Session, producer, *, batch_size: int = 100) -> int:
                     "payload": json.loads(event.payload_json)}
         result = {"acknowledged": False, "error": None}
 
-        def on_delivery(error, _message):
-            result["error"] = error
-            result["acknowledged"] = error is None
-
         try:
             producer.produce(TOPIC, key=event.transaction_id.encode(),
                              value=json.dumps(envelope, sort_keys=True).encode(),
-                             on_delivery=on_delivery)
+                             on_delivery=make_delivery_callback(result))
             outstanding = producer.flush(timeout=10)
             if outstanding or not result["acknowledged"] or result["error"]:
                 raise RuntimeError(f"Kafka delivery not confirmed: {result['error']}")
@@ -59,8 +64,11 @@ def run_publisher():
 
     engine = make_engine()
     Base.metadata.create_all(engine)
-    producer = Producer({"bootstrap.servers": os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092"),
-                         "enable.idempotence": True, "acks": "all"})
+    producer = Producer({
+        "bootstrap.servers": os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092"),
+        "enable.idempotence": True,
+        "acks": "all",
+    })
     while True:
         with Session(engine) as session:
             count = publish_batch(session, producer)
