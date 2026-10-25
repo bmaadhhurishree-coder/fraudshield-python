@@ -26,5 +26,10 @@ def score_transaction(tx: TransactionCreate) -> RiskResult:
         score += 15
         reasons.append("elevated_velocity")
     score = min(score, 100)
-    decision = Decision.DECLINE if score >= 90 else Decision.REVIEW if score >= 50 else Decision.ALLOW
+    if score >= 90:
+        decision = Decision.DECLINE
+    elif score >= 50:
+        decision = Decision.REVIEW
+    else:
+        decision = Decision.ALLOW
     return RiskResult(score=score, decision=decision, reasons=reasons, rule_version=RULE_VERSION)
